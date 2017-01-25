@@ -1,0 +1,29 @@
+{
+  "name": "sforce-auth",
+  "authors": [
+    "Craig Cavalier <craigcav@gmail.com>"
+  ],
+  "description": "Initiate authentication with Salesforce using a polymer component",
+  "main": "sforce-auth.html",
+  "keywords": [
+    "web-components",
+    "polymer",
+    "salesforce",
+    "auth",
+    "authentication",
+    "OAuth"
+  ],
+  "license": "MIT",
+  "homepage": "https://github.com/craigcav/sforce-auth",
+  "ignore": [
+    "**/.*",
+    "node_modules",
+    "bower_components",
+    "examples",
+    "test",
+    "tests"
+  ],
+  "dependencies": {
+    "polymer": "^1.7.1"
+  }
+}

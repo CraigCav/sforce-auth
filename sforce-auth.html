@@ -1,0 +1,142 @@
+<link rel="import" href="../polymer/polymer.html">
+
+<dom-module id="sforce-auth">
+  <script>
+    (function() {
+      'use strict';
+
+      Polymer({
+        is: 'sforce-auth', 
+        properties: {
+          /**
+           * Automatically trigger user authentication as soon as the component is ready.
+           *
+           * @type Boolean
+           */
+          auto: Boolean,
+          /**
+           * Set as true if you want OAuth flow to be started in a new child window.
+           *
+           * @type String
+           */
+          usePopupWindow: Boolean,
+          /**
+           * Consumer key for initiating OAuth based salesforce authentication.
+           *
+           * @type String
+           */
+          consumerKey: String,
+          /**
+           * Redirect URL property for OAuth based authentication.
+           *
+           * @type String
+           */
+          redirectUrl: String,
+          /**
+           * Login Host for salesforce authentication.
+           *
+           * @type String
+           * @default "https://login.salesforce.com/"
+           */
+          loginUrl: {
+            type: String,
+            value: 'https://login.salesforce.com/'
+          },
+          /**
+           * OAuth token. It is set by the component after successful completion of Salesforce OAuth.
+           *
+           * @type String
+           */
+          oauth: {
+            type: Object,
+            notify: true
+          }
+        },
+        /**
+         * Authenticates with Salesforce using a popup-based OAuth flow.
+         *
+         * @return {Promise} Promise that handles success and failure.
+         */
+        signInWithPopup: function() {
+          var loginUrl = this.loginUrl;
+          var consumerKey = this.consumerKey;
+          var redirectUrl = this.redirectUrl;
+
+          return this._handleSignIn(new Promise(function(resolve) {
+            var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
+                + '&response_type=token&client_id=' + escape(consumerKey)
+                + '&redirect_uri=' + escape(redirectUrl);
+
+            var loginWindow = window.open(authUrl, '_blank', 'location=no,toolbar=no');
+
+            if (loginWindow) {
+              // Creating an interval to detect popup window location change event
+              var interval = setInterval(function () {
+                if (loginWindow.closed) {
+                  // Clearing interval if popup was closed
+                  clearInterval(interval);
+                } else {
+                  // avoid cross-origin errors (accessing href from different origin)
+                  if(!~Object.keys(loginWindow.location).indexOf('href')) return;
+
+                  // once we're back on the same origin (after oauth callback)
+                  // access the oauth callback args
+                  var loc = loginWindow.location.href;
+                  if (typeof loc !== 'undefined' && loc.indexOf(redirectUrl) == 0) {
+                    loginWindow.close();
+                    resolve(unescape(loginWindow.location.hash));
+                  }
+                }
+              }, 250);
+
+              loginWindow.focus();
+            }
+          }));
+        },
+        ready: function() {
+          // if there is an oauth token, we're already signed in
+          if (this.oauth) {
+            this.fire('success');
+          } else if (this.auto) {
+            this.async(this.signIn);
+          }
+        },
+        /**
+         * Authenticate the user with salesforce via OAuth.
+         */
+        signIn: function() {
+          if (this.usePopupWindow) {
+            return this.signInWithPopup();
+          }
+        },
+        _handleSignIn: function(promise) {
+          return promise
+            .then(function(loc) {
+              var oauthResponse = {};
+
+              var fragment = loc.split('#')[1];
+
+              if (fragment) {
+                var nvps = fragment.split('&');
+                for (var nvp in nvps) {
+                  var parts = nvps[nvp].split('=');
+                  oauthResponse[parts[0]] = unescape(parts[1]);
+                }
+              }
+
+              if (typeof oauthResponse === 'undefined' || typeof oauthResponse['access_token'] === 'undefined') {
+                throw new Error('Unauthorized: No OAuth response');
+              } else {
+                this.oauth = oauthResponse;
+                this.fire('success');
+              }
+            }.bind(this))
+            .catch(function(err) {
+              this.fire('error', err);
+              throw err;
+            }.bind(this));
+        }
+      });
+    })();
+  </script>
+</dom-module>
