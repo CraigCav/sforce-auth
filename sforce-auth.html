@@ -93,12 +93,38 @@
             }
           }));
         },
+        /**
+         * Authenticates Salesforce using a redirect-based OAuth flow.
+         *
+         * @return {Promise} Promise that handles failure. (NOTE: The Promise
+         * will not get resolved on success due to the inherent page redirect
+         * of the auth flow, but it can be used to handle errors that happen
+         * before the redirect).
+         */
+        signInWithRedirect: function() {
+          var loginUrl = this.loginUrl;
+          var consumerKey = this.consumerKey;
+          var redirectUrl = this.redirectUrl;
+          return this._handleSignIn(new Promise(function(resolve) {
+            var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
+                + '&response_type=token&client_id=' + escape(consumerKey)
+                + '&redirect_uri=' + escape(redirectUrl);
+
+            // if the current window matches the redirect url and has an access token
+            // assume we're already authenticated
+            if (window.location.href.indexOf(redirectUrl) === 0 && ~window.location.href.indexOf('access_token')) {
+              resolve(window.location.hash);
+            } else window.location = authUrl;
+          }));
+        },
         ready: function() {
           // if there is an oauth token, we're already signed in
           if (this.oauth) {
             this.fire('success');
           } else if (this.auto) {
             this.async(this.signIn);
+          } else if (~window.location.href.indexOf('access_token')) {
+            this._handleSignIn(Promise.resolve(window.location.hash));
           }
         },
         /**
@@ -107,6 +133,8 @@
         signIn: function() {
           if (this.usePopupWindow) {
             return this.signInWithPopup();
+          } else {
+            return this.signInWithRedirect();
           }
         },
         _handleSignIn: function(promise) {

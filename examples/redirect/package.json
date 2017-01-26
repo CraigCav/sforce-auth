@@ -1,0 +1,15 @@
+{
+  "name": "oauth-redirect-example",
+  "version": "1.0.0",
+  "description": "Demonstrate redirect oauth flow",
+  "main": "proxy.js",
+  "authors": [
+    "Craig Cavalier <craigcav@gmail.com>"
+  ],
+  "license": "MIT",
+  "private": true,
+  "dependencies": {
+    "express": "^4.14.0",
+    "http-proxy": "^1.16.2"
+  }
+}
