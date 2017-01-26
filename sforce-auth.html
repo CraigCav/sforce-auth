@@ -5,6 +5,30 @@
     (function() {
       'use strict';
 
+      /**
+       * Loads a the provided url inside an iframe.
+       *
+       * @param  {!String} url Url to load.
+       * @return {Promise} Promise that resolves when the iframe is loaded.
+       */
+      function loadInFrame(url) {
+        return new Promise(function(resolve) {
+          var iframe = document.createElement('IFRAME');
+          iframe.setAttribute('style', 'width:0px; height:0px; visibility:hidden; position:absolute; border:none;');
+          iframe.src = url;
+          iframe.onload = function() {
+            setTimeout(function() {
+              resolve();
+              // remove the frame (if it still exists in the document body)
+              if(iframe.parentNode) {
+                document.body.removeChild(iframe);
+              }
+            }, 200);
+          };
+          document.body.appendChild(iframe);
+        });
+      }
+
       Polymer({
         is: 'sforce-auth', 
         properties: {
@@ -116,6 +140,19 @@
               resolve(window.location.hash);
             } else window.location = authUrl;
           }));
+        },
+        /**
+         * Unauthenticates with Salesforce.
+         *
+         * @return {Promise} Promise that handles success and failure.
+         */
+        signOut: function() {
+          var oauth = this.oauth;
+          this.oauth = null;
+
+          if(!oauth) return Promise.resolve();
+
+          return loadInFrame(oauth.instance_url + '/secur/logout.jsp');
         },
         ready: function() {
           // if there is an oauth token, we're already signed in
