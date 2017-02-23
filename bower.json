@@ -24,9 +24,9 @@
     "tests"
   ],
   "dependencies": {
-    "polymer": "^1.7.1"
+    "polymer": "Polymer/polymer#2.0-preview"
   },
   "devDependencies": {
-    "iron-component-page": "^1.1.8"
+    "iron-component-page": "2.0-preview"
   }
 }

@@ -1,207 +1,214 @@
 <link rel="import" href="../polymer/polymer.html">
 
-<dom-module id="sforce-auth">
-  <script>
-    (function() {
-      'use strict';
+<script>
+  (function() {
+    'use strict';
 
+    /**
+     * Loads a the provided url inside an iframe.
+     *
+     * @param  {!String} url Url to load.
+     * @return {Promise} Promise that resolves when the iframe is loaded.
+     */
+    function loadInFrame(url) {
+      return new Promise(function(resolve) {
+        var iframe = document.createElement('IFRAME');
+        iframe.setAttribute('style', 'width:0px; height:0px; visibility:hidden; position:absolute; border:none;');
+        iframe.src = url;
+        iframe.onload = function() {
+          setTimeout(function() {
+            resolve();
+            // remove the frame (if it still exists in the document body)
+            if(iframe.parentNode) {
+              document.body.removeChild(iframe);
+            }
+          }, 200);
+        };
+        document.body.appendChild(iframe);
+      });
+    }
+
+    class SforceAuth extends Polymer.Element {
+      static get is() { return 'sforce-auth'; }
+      static get config() {
+        return {
+          properties: {
+            /**
+             * Automatically trigger user authentication as soon as the component is ready.
+             *
+             * @type Boolean
+             */
+            auto: Boolean,
+            /**
+             * Set as true if you want OAuth flow to be started in a new child window.
+             *
+             * @type String
+             */
+            usePopupWindow: Boolean,
+            /**
+             * Consumer key for initiating OAuth based salesforce authentication.
+             *
+             * @type String
+             */
+            consumerKey: String,
+            /**
+             * Redirect URL property for OAuth based authentication.
+             *
+             * @type String
+             */
+            redirectUrl: String,
+            /**
+             * Login Host for salesforce authentication.
+             *
+             * @type String
+             * @default "https://login.salesforce.com/"
+             */
+            loginUrl: {
+              type: String,
+              value: 'https://login.salesforce.com/'
+            },
+            /**
+             * OAuth token. It is set by the component after successful completion of Salesforce OAuth.
+             *
+             * @type String
+             */
+            oauth: {
+              type: Object,
+              notify: true
+            }
+          }
+        };
+      }
       /**
-       * Loads a the provided url inside an iframe.
+       * Authenticates with Salesforce using a popup-based OAuth flow.
        *
-       * @param  {!String} url Url to load.
-       * @return {Promise} Promise that resolves when the iframe is loaded.
+       * @return {Promise} Promise that handles success and failure.
        */
-      function loadInFrame(url) {
-        return new Promise(function(resolve) {
-          var iframe = document.createElement('IFRAME');
-          iframe.setAttribute('style', 'width:0px; height:0px; visibility:hidden; position:absolute; border:none;');
-          iframe.src = url;
-          iframe.onload = function() {
-            setTimeout(function() {
-              resolve();
-              // remove the frame (if it still exists in the document body)
-              if(iframe.parentNode) {
-                document.body.removeChild(iframe);
+      signInWithPopup() {
+        var loginUrl = this.loginUrl;
+        var consumerKey = this.consumerKey;
+        var redirectUrl = this.redirectUrl;
+
+        return this._handleSignIn(new Promise(function(resolve) {
+          var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
+              + '&response_type=token&client_id=' + escape(consumerKey)
+              + '&redirect_uri=' + escape(redirectUrl);
+
+          var loginWindow = window.open(authUrl, '_blank', 'location=no,toolbar=no');
+
+          if (loginWindow) {
+            // Creating an interval to detect popup window location change event
+            var interval = setInterval(function () {
+              if (loginWindow.closed) {
+                // Clearing interval if popup was closed
+                clearInterval(interval);
+              } else {
+                // avoid cross-origin errors (accessing href from different origin)
+                if(!~Object.keys(loginWindow.location).indexOf('href')) return;
+
+                // once we're back on the same origin (after oauth callback)
+                // access the oauth callback args
+                var loc = loginWindow.location.href;
+                if (typeof loc !== 'undefined' && loc.indexOf(redirectUrl) == 0) {
+                  loginWindow.close();
+                  resolve(unescape(loginWindow.location.hash));
+                }
               }
-            }, 200);
-          };
-          document.body.appendChild(iframe);
+            }, 250);
+
+            loginWindow.focus();
+          }
+        }));
+      }
+      /**
+       * Authenticates Salesforce using a redirect-based OAuth flow.
+       *
+       * @return {Promise} Promise that handles failure. (NOTE: The Promise
+       * will not get resolved on success due to the inherent page redirect
+       * of the auth flow, but it can be used to handle errors that happen
+       * before the redirect).
+       */
+      signInWithRedirect() {
+        var loginUrl = this.loginUrl;
+        var consumerKey = this.consumerKey;
+        var redirectUrl = this.redirectUrl;
+        return this._handleSignIn(new Promise(function(resolve) {
+          var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
+              + '&response_type=token&client_id=' + escape(consumerKey)
+              + '&redirect_uri=' + escape(redirectUrl);
+
+          // if the current window matches the redirect url and has an access token
+          // assume we're already authenticated
+          if (window.location.href.indexOf(redirectUrl) === 0 && ~window.location.href.indexOf('access_token')) {
+            resolve(window.location.hash);
+          } else window.location = authUrl;
+        }));
+      }
+      /**
+       * Unauthenticates with Salesforce.
+       *
+       * @return {Promise} Promise that handles success and failure.
+       */
+      signOut() {
+        var oauth = this.oauth;
+        this.oauth = null;
+
+        if(!oauth) return Promise.resolve();
+
+        return loadInFrame(oauth.instance_url + '/secur/logout.jsp');
+      }
+      ready() {
+        // if there is an oauth token, we're already signed in
+        if (this.oauth) {
+          this.dispatchEvent(new CustomEvent('success', { bubbles: true }));
+        } else if (this.auto) {
+          this.signIn();
+        } else if (~window.location.href.indexOf('access_token')) {
+          this._handleSignIn(Promise.resolve(window.location.hash));
+        }
+      }
+      /**
+       * Authenticate the user with salesforce via OAuth.
+       */
+      signIn() {
+        if (this.usePopupWindow) {
+          return this.signInWithPopup();
+        } else {
+          return this.signInWithRedirect();
+        }
+      }
+      _handleSignIn(promise) {
+        return promise.then(loc => {
+          var oauthResponse = {};
+
+          var fragment = loc.split('#')[1];
+
+          if (fragment) {
+            var nvps = fragment.split('&');
+            for (var nvp in nvps) {
+              var parts = nvps[nvp].split('=');
+              oauthResponse[parts[0]] = unescape(parts[1]);
+            }
+          }
+
+          if (typeof oauthResponse === 'undefined' || typeof oauthResponse['access_token'] === 'undefined') {
+            throw new Error('Unauthorized: No OAuth response');
+          } else {
+            this.oauth = oauthResponse;
+            this.dispatchEvent(new CustomEvent('success', { bubbles: true }));
+          }
+        })
+        .catch(err => {
+          this.dispatchEvent(new ErrorEvent('error', {
+            error : err,
+            message : err.message,
+            lineno : 204,
+            filename : 'sforce-auth'
+          }));
+          throw err;
         });
       }
-
-      Polymer({
-        is: 'sforce-auth', 
-        properties: {
-          /**
-           * Automatically trigger user authentication as soon as the component is ready.
-           *
-           * @type Boolean
-           */
-          auto: Boolean,
-          /**
-           * Set as true if you want OAuth flow to be started in a new child window.
-           *
-           * @type String
-           */
-          usePopupWindow: Boolean,
-          /**
-           * Consumer key for initiating OAuth based salesforce authentication.
-           *
-           * @type String
-           */
-          consumerKey: String,
-          /**
-           * Redirect URL property for OAuth based authentication.
-           *
-           * @type String
-           */
-          redirectUrl: String,
-          /**
-           * Login Host for salesforce authentication.
-           *
-           * @type String
-           * @default "https://login.salesforce.com/"
-           */
-          loginUrl: {
-            type: String,
-            value: 'https://login.salesforce.com/'
-          },
-          /**
-           * OAuth token. It is set by the component after successful completion of Salesforce OAuth.
-           *
-           * @type String
-           */
-          oauth: {
-            type: Object,
-            notify: true
-          }
-        },
-        /**
-         * Authenticates with Salesforce using a popup-based OAuth flow.
-         *
-         * @return {Promise} Promise that handles success and failure.
-         */
-        signInWithPopup: function() {
-          var loginUrl = this.loginUrl;
-          var consumerKey = this.consumerKey;
-          var redirectUrl = this.redirectUrl;
-
-          return this._handleSignIn(new Promise(function(resolve) {
-            var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
-                + '&response_type=token&client_id=' + escape(consumerKey)
-                + '&redirect_uri=' + escape(redirectUrl);
-
-            var loginWindow = window.open(authUrl, '_blank', 'location=no,toolbar=no');
-
-            if (loginWindow) {
-              // Creating an interval to detect popup window location change event
-              var interval = setInterval(function () {
-                if (loginWindow.closed) {
-                  // Clearing interval if popup was closed
-                  clearInterval(interval);
-                } else {
-                  // avoid cross-origin errors (accessing href from different origin)
-                  if(!~Object.keys(loginWindow.location).indexOf('href')) return;
-
-                  // once we're back on the same origin (after oauth callback)
-                  // access the oauth callback args
-                  var loc = loginWindow.location.href;
-                  if (typeof loc !== 'undefined' && loc.indexOf(redirectUrl) == 0) {
-                    loginWindow.close();
-                    resolve(unescape(loginWindow.location.hash));
-                  }
-                }
-              }, 250);
-
-              loginWindow.focus();
-            }
-          }));
-        },
-        /**
-         * Authenticates Salesforce using a redirect-based OAuth flow.
-         *
-         * @return {Promise} Promise that handles failure. (NOTE: The Promise
-         * will not get resolved on success due to the inherent page redirect
-         * of the auth flow, but it can be used to handle errors that happen
-         * before the redirect).
-         */
-        signInWithRedirect: function() {
-          var loginUrl = this.loginUrl;
-          var consumerKey = this.consumerKey;
-          var redirectUrl = this.redirectUrl;
-          return this._handleSignIn(new Promise(function(resolve) {
-            var authUrl = loginUrl + 'services/oauth2/authorize?display=touch'
-                + '&response_type=token&client_id=' + escape(consumerKey)
-                + '&redirect_uri=' + escape(redirectUrl);
-
-            // if the current window matches the redirect url and has an access token
-            // assume we're already authenticated
-            if (window.location.href.indexOf(redirectUrl) === 0 && ~window.location.href.indexOf('access_token')) {
-              resolve(window.location.hash);
-            } else window.location = authUrl;
-          }));
-        },
-        /**
-         * Unauthenticates with Salesforce.
-         *
-         * @return {Promise} Promise that handles success and failure.
-         */
-        signOut: function() {
-          var oauth = this.oauth;
-          this.oauth = null;
-
-          if(!oauth) return Promise.resolve();
-
-          return loadInFrame(oauth.instance_url + '/secur/logout.jsp');
-        },
-        ready: function() {
-          // if there is an oauth token, we're already signed in
-          if (this.oauth) {
-            this.fire('success');
-          } else if (this.auto) {
-            this.async(this.signIn);
-          } else if (~window.location.href.indexOf('access_token')) {
-            this._handleSignIn(Promise.resolve(window.location.hash));
-          }
-        },
-        /**
-         * Authenticate the user with salesforce via OAuth.
-         */
-        signIn: function() {
-          if (this.usePopupWindow) {
-            return this.signInWithPopup();
-          } else {
-            return this.signInWithRedirect();
-          }
-        },
-        _handleSignIn: function(promise) {
-          return promise
-            .then(function(loc) {
-              var oauthResponse = {};
-
-              var fragment = loc.split('#')[1];
-
-              if (fragment) {
-                var nvps = fragment.split('&');
-                for (var nvp in nvps) {
-                  var parts = nvps[nvp].split('=');
-                  oauthResponse[parts[0]] = unescape(parts[1]);
-                }
-              }
-
-              if (typeof oauthResponse === 'undefined' || typeof oauthResponse['access_token'] === 'undefined') {
-                throw new Error('Unauthorized: No OAuth response');
-              } else {
-                this.oauth = oauthResponse;
-                this.fire('success');
-              }
-            }.bind(this))
-            .catch(function(err) {
-              this.fire('error', err);
-              throw err;
-            }.bind(this));
-        }
-      });
-    })();
-  </script>
-</dom-module>
+    }
+    customElements.define(SforceAuth.is, SforceAuth);
+  })();
+</script>
